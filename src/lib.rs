@@ -1,10 +1,12 @@
+pub use std::sync::mpsc::{Receiver, SyncSender};
 use std::{
     error::Error,
     fmt::Display,
-    sync::{Arc, Mutex, mpsc::Receiver},
+    sync::{Arc, Mutex, mpsc::sync_channel},
     thread,
 };
 
+use context::{FutureTaskState, State};
 pub use futures::{FutureExt, future::LocalBoxFuture};
 use futures::{executor::block_on, select};
 use log::{trace, warn};
@@ -40,13 +42,25 @@ pub trait TaskBuilder {
     type Error: Error + Clone;
     type Task: Task<Self::Error>;
 
-    fn build(self) -> Self::Task;
+    fn build(self, tx: SyncSender<Self::Output>) -> Self::Task;
+    fn channel_size(&self) -> usize {
+        10
+    }
 }
 
 pub trait Task<E: Error + Clone>: Send + 'static {
     fn on_start(&mut self, ctx: Context<E>) -> LocalBoxFuture<'_, Result<(), E>> {
+        drop(ctx);
         async {
             trace!("on_start");
+            Ok(())
+        }
+        .boxed_local()
+    }
+    fn on_stop(&mut self, ctx: Context<E>) -> LocalBoxFuture<'_, Result<(), E>> {
+        drop(ctx);
+        async {
+            trace!("on_stop");
             Ok(())
         }
         .boxed_local()
@@ -99,41 +113,80 @@ impl<E: Error + Clone + Send + 'static> SingletonTask<E> {
 
     fn work_start_task(next: WaitingTask<E>) -> Result<(), TaskError<E>> {
         trace!("run task {}", next.task.ctx.id());
-        let res = block_on(async {
+        let ctx = next.task.ctx.clone();
+        let mut task = next.task.task;
+        match block_on(async {
             select! {
-                res = next.task.task.on_start()=>{
-                    res
-                },
-                _ = ctx.cancel.cancelled()  => {
-                    Err()
-                }
+                res = task.on_start(ctx.clone()).fuse() => res.map_err(|e|e.into()),
+                res = ctx.wait_for(State::Stopping).fuse()=> res
             }
+        }) {
+            Ok(_) => {
+                if ctx.set_state(State::Running).is_err() {
+                    return Err(TaskError::Cancelled);
+                };
+            }
+            Err(e) => {
+                ctx.stop_with_result(Some(e));
+            }
+        }
+
+        block_on(async {
+            let _ = ctx.wait_for(State::Stopping).await;
+            let _ = task.on_stop(ctx.clone()).await;
         });
+        let _ = ctx.set_state(State::Stopped);
 
         Ok(())
     }
 
-    pub fn start<T: TaskBuilder<Error = E>>(
+    pub async fn start<T: TaskBuilder<Error = E>>(
         &self,
         task_builder: T,
-    ) -> Result<Receiver<T::Output>, TaskError<E>> {
-        let task = Box::new(task_builder.build());
+    ) -> Result<TaskHandle<T::Output, E>, TaskError<E>> {
+        let channel_size = task_builder.channel_size();
+        let (tx, rx) = sync_channel::<T::Output>(channel_size);
+        let task = Box::new(task_builder.build(tx));
         let task_box = TaskBox {
             task,
             ctx: Context::default(),
         };
+        let ctx = task_box.ctx.clone();
 
         if let Some(old) = self.tx.send(WaitingTask { task: task_box }) {
             trace!("stop old");
+            old.task.ctx.stop();
         }
-        loop {}
-        Err(TaskError::Cancelled)
+        ctx.wait_for(State::Running).await?;
+
+        Ok(TaskHandle { rx, ctx })
     }
 }
 
 impl<E: Error + Clone + Send + 'static> Default for SingletonTask<E> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct TaskHandle<T, E: Error + Clone + Send + 'static> {
+    pub rx: Receiver<T>,
+    pub ctx: Context<E>,
+}
+
+impl<T, E> TaskHandle<T, E>
+where
+    E: Error + Clone + Send + 'static,
+{
+    pub fn stop(self) -> FutureTaskState<E> {
+        self.ctx.stop()
+    }
+    pub fn wait_for_stopped(self) -> impl Future<Output = Result<(), TaskError<E>>> {
+        self.ctx.wait_for(State::Stopped)
+    }
+
+    pub fn recv(&self) -> Result<T, std::sync::mpsc::RecvError> {
+        self.rx.recv()
     }
 }
 
@@ -176,7 +229,7 @@ mod test {
         type Error = Error1;
         type Task = Task1;
 
-        fn build(self) -> Self::Task {
+        fn build(self, tx: SyncSender<u32>) -> Self::Task {
             Task1 { a: 1 }
         }
     }
@@ -189,6 +242,6 @@ mod test {
             .init();
 
         let st = SingletonTask::<Error1>::new();
-        let rx = st.start(Tasl1Builder {}).unwrap();
+        let rx = st.start(Tasl1Builder {}).await.unwrap();
     }
 }

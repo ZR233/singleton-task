@@ -7,6 +7,8 @@ use std::{
     task::{Poll, Waker},
 };
 
+use log::trace;
+
 use crate::TaskError;
 
 #[derive(Clone)]
@@ -23,6 +25,27 @@ impl<E: Error + Clone> Context<E> {
     pub(crate) fn set_state(&self, state: State) -> Result<(), &'static str> {
         self.inner.lock().unwrap().set_state(state)
     }
+
+    pub fn wait_for(&self, state: State) -> FutureTaskState<E> {
+        FutureTaskState::new(self.clone(), state)
+    }
+
+    pub fn stop(&self) -> FutureTaskState<E> {
+        self.stop_with_result(Some(TaskError::Cancelled))
+    }
+
+    pub fn stop_with_result(&self, res: Option<TaskError<E>>) -> FutureTaskState<E> {
+        let fur = self.wait_for(State::Stopped);
+        let mut g = self.inner.lock().unwrap();
+        if g.state >= State::Stopping {
+            return fur;
+        }
+        trace!("cancel all");
+        let _ = g.set_state(State::Stopping);
+        g.error = res;
+        g.wake_all();
+        fur
+    }
 }
 
 impl<E: Error + Clone> Default for Context<E> {
@@ -38,7 +61,7 @@ impl<E: Error + Clone> Default for Context<E> {
 }
 
 struct ContextInner<E: Error + Clone> {
-    error: Option<E>,
+    error: Option<TaskError<E>>,
     state: State,
     wakers: Vec<Waker>,
     work_count: u32,
@@ -56,7 +79,7 @@ impl<E: Error + Clone> ContextInner<E> {
         if state < self.state {
             return Err("state is not allowed");
         }
-
+        trace!("[{:?}]=>[{:?}]", self.state, state);
         self.state = state;
         self.wake_all();
         Ok(())
@@ -109,7 +132,7 @@ impl<E: Error + Clone> Future for FutureTaskState<E> {
         let mut g = self.ctx.inner.lock().unwrap();
         if g.state >= self.want {
             Poll::Ready(match g.error.clone() {
-                Some(e) => Err(e.into()),
+                Some(e) => Err(e),
                 None => Ok(()),
             })
         } else {
