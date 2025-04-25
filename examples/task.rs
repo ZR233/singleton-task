@@ -26,13 +26,13 @@ impl Task<Error1> for Task1 {
         async move {
             trace!("[{}]on_start", ctx.id());
             let tx = self.tx.take().unwrap();
-            thread::spawn(move || {
+            let id = ctx.id();
+            ctx.spawn(async move {
                 for i in 0..10 {
                     let _ = tx.send(i);
-                    info!("[{}]send {}", ctx.id(), i);
+                    info!("[{}]send {}", id, i);
                     thread::sleep(Duration::from_millis(100));
                 }
-                ctx.stop();
             });
 
             Ok(())

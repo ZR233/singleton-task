@@ -129,8 +129,9 @@ impl<E: TError> SingletonTask<E> {
         block_on(async {
             let _ = ctx.wait_for(State::Stopping).await;
             let _ = task.on_stop(ctx.clone()).await;
+            ctx.work_done();
+            let _ = ctx.wait_for(State::Stopped).await;
         });
-        let _ = ctx.set_state(State::Stopped);
 
         Ok(())
     }

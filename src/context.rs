@@ -4,8 +4,10 @@ use std::{
         atomic::{AtomicU32, Ordering},
     },
     task::{Poll, Waker},
+    thread,
 };
 
+use futures::{FutureExt, executor::block_on, select};
 use log::trace;
 
 use crate::{TError, TaskError};
@@ -44,6 +46,23 @@ impl<E: TError> Context<E> {
         g.wake_all();
         fur
     }
+
+    pub fn spawn<F>(&self, fut: F)
+    where
+        F: Future + Send + 'static,
+    {
+        let mut g = self.inner.lock().unwrap();
+        g.spawn(self, fut);
+    }
+
+    pub(crate) fn work_done(&self) {
+        let mut g = self.inner.lock().unwrap();
+        g.work_count -= 1;
+        trace!("[{:>6}] work count {}", self.id, g.work_count);
+        if g.work_count == 0 {
+            let _ = g.set_state(State::Stopped);
+        }
+    }
 }
 
 impl<E: TError> Default for Context<E> {
@@ -55,6 +74,7 @@ impl<E: TError> Default for Context<E> {
             id,
             inner: Arc::new(Mutex::new(ContextInner {
                 id,
+                work_count: 1,
                 ..Default::default()
             })),
         }
@@ -85,6 +105,28 @@ impl<E: TError> ContextInner<E> {
         self.state = state;
         self.wake_all();
         Ok(())
+    }
+
+    fn spawn<F>(&mut self, ctx: &Context<E>, fur: F)
+    where
+        F: Future + Send + 'static,
+    {
+        let ctx = ctx.clone();
+        if matches!(self.state, State::Stopping | State::Stopped) {
+            return;
+        }
+
+        self.work_count += 1;
+        trace!("[{:>6}] work count {}", ctx.id, self.work_count);
+        thread::spawn(move || {
+            block_on(async move {
+                select! {
+                    _ = fur.fuse() =>{}
+                    _ = ctx.wait_for(State::Stopping).fuse() => {}
+                }
+                ctx.work_done();
+            });
+        });
     }
 }
 
