@@ -1,10 +1,5 @@
 pub use std::sync::mpsc::{Receiver, SyncSender};
-use std::{
-    error::Error,
-    fmt::Display,
-    sync::{Arc, Mutex, mpsc::sync_channel},
-    thread,
-};
+use std::{error::Error, fmt::Display, sync::mpsc::sync_channel, thread};
 
 use context::{FutureTaskState, State};
 pub use futures::{FutureExt, future::LocalBoxFuture};
@@ -12,9 +7,10 @@ use futures::{executor::block_on, select};
 use log::{trace, warn};
 
 mod context;
-mod one_channel;
+mod task_chan;
 
 pub use context::Context;
+use task_chan::{TaskReceiver, TaskSender, task_channel};
 
 pub trait TError: Error + Clone + Send + 'static {}
 
@@ -79,34 +75,21 @@ struct WaitingTask<E: TError> {
 }
 
 pub struct SingletonTask<E: TError> {
-    tx: one_channel::Sender<WaitingTask<E>>,
-    current: Arc<Mutex<Option<Context<E>>>>,
+    tx: TaskSender<E>,
 }
 
 impl<E: TError> SingletonTask<E> {
     pub fn new() -> Self {
-        let current = Arc::new(Mutex::new(None));
-        let (tx, rx) = one_channel::one_channel::<WaitingTask<E>>();
-        let cur = current.clone();
+        let (tx, rx) = task_channel::<E>();
 
-        thread::spawn(move || Self::work_deal_start(cur, rx));
+        thread::spawn(move || Self::work_deal_start(rx));
 
-        Self { tx, current }
+        Self { tx }
     }
 
-    fn work_deal_start(
-        current: Arc<Mutex<Option<Context<E>>>>,
-        rx: one_channel::Receiver<WaitingTask<E>>,
-    ) {
+    fn work_deal_start(rx: TaskReceiver<E>) {
         while let Some(next) = rx.recv() {
             let ctx = next.task.ctx.clone();
-            {
-                let mut g = current.lock().unwrap();
-                if ctx.set_state(context::State::Preparing).is_err() {
-                    continue;
-                }
-                g.replace(next.task.ctx.clone());
-            }
             if let Err(e) = Self::work_start_task(next) {
                 warn!("task [{}] error: {}", ctx.id(), e);
             }
@@ -155,10 +138,8 @@ impl<E: TError> SingletonTask<E> {
         };
         let ctx = task_box.ctx.clone();
 
-        if let Some(old) = self.tx.send(WaitingTask { task: task_box }) {
-            trace!("stop old");
-            old.task.ctx.stop();
-        }
+        self.tx.send(WaitingTask { task: task_box });
+
         ctx.wait_for(State::Running).await?;
 
         Ok(TaskHandle { rx, ctx })
@@ -197,7 +178,7 @@ mod test {
 
     #[derive(Debug, Clone)]
     enum Error1 {
-        A,
+        _A,
     }
 
     impl TError for Error1 {}
@@ -209,11 +190,11 @@ mod test {
     }
 
     struct Task1 {
-        a: i32,
+        _a: i32,
     }
 
     impl Task<Error1> for Task1 {
-        fn on_start(&mut self, ctx: Context<Error1>) -> LocalBoxFuture<'_, Result<(), Error1>> {
+        fn on_start(&mut self, _ctx: Context<Error1>) -> LocalBoxFuture<'_, Result<(), Error1>> {
             async {
                 trace!("on_start 1");
                 Ok(())
@@ -229,8 +210,8 @@ mod test {
         type Error = Error1;
         type Task = Task1;
 
-        fn build(self, tx: SyncSender<u32>) -> Self::Task {
-            Task1 { a: 1 }
+        fn build(self, _tx: SyncSender<u32>) -> Self::Task {
+            Task1 { _a: 1 }
         }
     }
 
@@ -242,6 +223,6 @@ mod test {
             .init();
 
         let st = SingletonTask::<Error1>::new();
-        let rx = st.start(Tasl1Builder {}).await.unwrap();
+        let _rx = st.start(Tasl1Builder {}).await.unwrap();
     }
 }
