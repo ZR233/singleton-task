@@ -1,5 +1,4 @@
 use std::{
-    error::Error,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU32, Ordering},
@@ -9,15 +8,15 @@ use std::{
 
 use log::trace;
 
-use crate::TaskError;
+use crate::{TError, TaskError};
 
 #[derive(Clone)]
-pub struct Context<E: Error + Clone> {
+pub struct Context<E: TError> {
     id: u32,
     inner: Arc<Mutex<ContextInner<E>>>,
 }
 
-impl<E: Error + Clone> Context<E> {
+impl<E: TError> Context<E> {
     pub fn id(&self) -> u32 {
         self.id
     }
@@ -48,7 +47,7 @@ impl<E: Error + Clone> Context<E> {
     }
 }
 
-impl<E: Error + Clone> Default for Context<E> {
+impl<E: TError> Default for Context<E> {
     fn default() -> Self {
         static TASK_ID: AtomicU32 = AtomicU32::new(1);
         let id = TASK_ID.fetch_add(1, Ordering::SeqCst);
@@ -60,14 +59,14 @@ impl<E: Error + Clone> Default for Context<E> {
     }
 }
 
-struct ContextInner<E: Error + Clone> {
+struct ContextInner<E: TError> {
     error: Option<TaskError<E>>,
     state: State,
     wakers: Vec<Waker>,
     work_count: u32,
 }
 
-impl<E: Error + Clone> ContextInner<E> {
+impl<E: TError> ContextInner<E> {
     fn wake_all(&mut self) {
         for waker in self.wakers.iter() {
             waker.wake_by_ref();
@@ -86,7 +85,7 @@ impl<E: Error + Clone> ContextInner<E> {
     }
 }
 
-impl<E: Error + Clone> Default for ContextInner<E> {
+impl<E: TError> Default for ContextInner<E> {
     fn default() -> Self {
         Self {
             error: None,
@@ -112,17 +111,17 @@ impl Default for State {
     }
 }
 
-pub struct FutureTaskState<E: Error + Clone> {
+pub struct FutureTaskState<E: TError> {
     ctx: Context<E>,
     want: State,
 }
-impl<E: Error + Clone> FutureTaskState<E> {
+impl<E: TError> FutureTaskState<E> {
     fn new(ctx: Context<E>, want: State) -> Self {
         Self { ctx, want }
     }
 }
 
-impl<E: Error + Clone> Future for FutureTaskState<E> {
+impl<E: TError> Future for FutureTaskState<E> {
     type Output = Result<(), TaskError<E>>;
 
     fn poll(

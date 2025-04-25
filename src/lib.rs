@@ -16,19 +16,21 @@ mod one_channel;
 
 pub use context::Context;
 
+pub trait TError: Error + Clone + Send + 'static {}
+
 #[derive(Debug, Clone)]
-pub enum TaskError<E: Error + Clone> {
+pub enum TaskError<E: TError> {
     Cancelled,
     Error(E),
 }
 
-impl<E: Error + Clone> From<E> for TaskError<E> {
+impl<E: TError> From<E> for TaskError<E> {
     fn from(value: E) -> Self {
         Self::Error(value)
     }
 }
 
-impl<E: Error + Clone> Display for TaskError<E> {
+impl<E: TError> Display for TaskError<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Cancelled => write!(f, "Cancelled"),
@@ -39,7 +41,7 @@ impl<E: Error + Clone> Display for TaskError<E> {
 
 pub trait TaskBuilder {
     type Output: Send + 'static;
-    type Error: Error + Clone;
+    type Error: TError;
     type Task: Task<Self::Error>;
 
     fn build(self, tx: SyncSender<Self::Output>) -> Self::Task;
@@ -48,7 +50,7 @@ pub trait TaskBuilder {
     }
 }
 
-pub trait Task<E: Error + Clone>: Send + 'static {
+pub trait Task<E: TError>: Send + 'static {
     fn on_start(&mut self, ctx: Context<E>) -> LocalBoxFuture<'_, Result<(), E>> {
         drop(ctx);
         async {
@@ -67,21 +69,21 @@ pub trait Task<E: Error + Clone>: Send + 'static {
     }
 }
 
-struct TaskBox<E: Error + Clone + Send + 'static> {
+struct TaskBox<E: TError> {
     task: Box<dyn Task<E>>,
     ctx: Context<E>,
 }
 
-struct WaitingTask<E: Error + Clone + Send + 'static> {
+struct WaitingTask<E: TError> {
     task: TaskBox<E>,
 }
 
-pub struct SingletonTask<E: Error + Clone + Send + 'static> {
+pub struct SingletonTask<E: TError> {
     tx: one_channel::Sender<WaitingTask<E>>,
     current: Arc<Mutex<Option<Context<E>>>>,
 }
 
-impl<E: Error + Clone + Send + 'static> SingletonTask<E> {
+impl<E: TError> SingletonTask<E> {
     pub fn new() -> Self {
         let current = Arc::new(Mutex::new(None));
         let (tx, rx) = one_channel::one_channel::<WaitingTask<E>>();
@@ -163,21 +165,18 @@ impl<E: Error + Clone + Send + 'static> SingletonTask<E> {
     }
 }
 
-impl<E: Error + Clone + Send + 'static> Default for SingletonTask<E> {
+impl<E: TError> Default for SingletonTask<E> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub struct TaskHandle<T, E: Error + Clone + Send + 'static> {
+pub struct TaskHandle<T, E: TError> {
     pub rx: Receiver<T>,
     pub ctx: Context<E>,
 }
 
-impl<T, E> TaskHandle<T, E>
-where
-    E: Error + Clone + Send + 'static,
-{
+impl<T, E: TError> TaskHandle<T, E> {
     pub fn stop(self) -> FutureTaskState<E> {
         self.ctx.stop()
     }
@@ -201,6 +200,7 @@ mod test {
         A,
     }
 
+    impl TError for Error1 {}
     impl Error for Error1 {}
     impl Display for Error1 {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

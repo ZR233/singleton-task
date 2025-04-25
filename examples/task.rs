@@ -8,6 +8,7 @@ enum Error1 {
     A,
 }
 
+impl TError for Error1 {}
 impl Error for Error1 {}
 impl Display for Error1 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
