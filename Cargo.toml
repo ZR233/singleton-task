@@ -2,6 +2,8 @@
 name = "singleton-task"
 version = "0.1.0"
 edition = "2024"
+authors = ["周睿 <zrufo747@outlook.com>"]
+description = "A singleton task based on tokio"
 
 [dependencies]
 futures = "0.3"
