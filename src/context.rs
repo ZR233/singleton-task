@@ -30,7 +30,6 @@ impl<E: TError> Context<E> {
     }
 
     pub fn stop(&self) -> FutureTaskState<E> {
-        trace!("stop {}", self.id());
         self.stop_with_result(Some(TaskError::Cancelled))
     }
 
@@ -40,7 +39,6 @@ impl<E: TError> Context<E> {
         if g.state >= State::Stopping {
             return fur;
         }
-        trace!("cancel all");
         let _ = g.set_state(State::Stopping);
         g.error = res;
         g.wake_all();
@@ -55,7 +53,10 @@ impl<E: TError> Default for Context<E> {
 
         Self {
             id,
-            inner: Default::default(),
+            inner: Arc::new(Mutex::new(ContextInner {
+                id,
+                ..Default::default()
+            })),
         }
     }
 }
@@ -65,6 +66,7 @@ struct ContextInner<E: TError> {
     state: State,
     wakers: Vec<Waker>,
     work_count: u32,
+    id: u32,
 }
 
 impl<E: TError> ContextInner<E> {
@@ -79,7 +81,7 @@ impl<E: TError> ContextInner<E> {
         if state < self.state {
             return Err("state is not allowed");
         }
-        trace!("[{:?}]=>[{:?}]", self.state, state);
+        trace!("[{:>6}] [{:?}]=>[{:?}]", self.id, self.state, state);
         self.state = state;
         self.wake_all();
         Ok(())
@@ -89,6 +91,7 @@ impl<E: TError> ContextInner<E> {
 impl<E: TError> Default for ContextInner<E> {
     fn default() -> Self {
         Self {
+            id: 0,
             error: None,
             state: State::default(),
             wakers: Default::default(),

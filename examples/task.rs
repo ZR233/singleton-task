@@ -24,11 +24,12 @@ struct Task1 {
 impl Task<Error1> for Task1 {
     fn on_start(&mut self, ctx: Context<Error1>) -> LocalBoxFuture<'_, Result<(), Error1>> {
         async move {
-            trace!("on_start 1");
+            trace!("[{}]on_start", ctx.id());
             let tx = self.tx.take().unwrap();
             thread::spawn(move || {
                 for i in 0..10 {
                     let _ = tx.send(i);
+                    info!("[{}]send {}", ctx.id(), i);
                     thread::sleep(Duration::from_millis(100));
                 }
                 ctx.stop();
