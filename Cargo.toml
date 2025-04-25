@@ -6,6 +6,8 @@ authors = ["周睿 <zrufo747@outlook.com>"]
 description = "A singleton task based on tokio"
 repository = "https://gitee.com/zr233/singleton-task"
 license = "MulanPSL-2.0"
+keywords = ["task", "async"]
+categories = ["async"]
 
 [dependencies]
 futures = "0.3"
