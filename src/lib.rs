@@ -1,5 +1,10 @@
 pub use std::sync::mpsc::{Receiver, SyncSender};
-use std::{error::Error, fmt::Display, sync::mpsc::sync_channel, thread};
+use std::{
+    error::Error,
+    fmt::Display,
+    sync::{Arc, mpsc::sync_channel},
+    thread,
+};
 
 use context::{FutureTaskState, State};
 pub use futures::{FutureExt, future::LocalBoxFuture};
@@ -74,8 +79,10 @@ struct WaitingTask<E: TError> {
     task: TaskBox<E>,
 }
 
+#[derive(Clone)]
 pub struct SingletonTask<E: TError> {
     tx: TaskSender<E>,
+    _drop: Arc<TaskDrop<E>>,
 }
 
 impl<E: TError> SingletonTask<E> {
@@ -84,14 +91,17 @@ impl<E: TError> SingletonTask<E> {
 
         thread::spawn(move || Self::work_deal_start(rx));
 
-        Self { tx }
+        Self {
+            _drop: Arc::new(TaskDrop { tx: tx.clone() }),
+            tx,
+        }
     }
 
     fn work_deal_start(rx: TaskReceiver<E>) {
         while let Some(next) = rx.recv() {
-            let ctx = next.task.ctx.clone();
+            let id = next.task.ctx.id();
             if let Err(e) = Self::work_start_task(next) {
-                warn!("task [{}] error: {}", ctx.id(), e);
+                warn!("task [{}] error: {}", id, e);
             }
         }
     }
@@ -143,6 +153,15 @@ impl<E: TError> SingletonTask<E> {
         ctx.wait_for(State::Running).await?;
 
         Ok(TaskHandle { rx, ctx })
+    }
+}
+
+struct TaskDrop<E: TError> {
+    tx: TaskSender<E>,
+}
+impl<E: TError> Drop for TaskDrop<E> {
+    fn drop(&mut self) {
+        self.tx.stop();
     }
 }
 

@@ -30,6 +30,7 @@ impl<E: TError> Context<E> {
     }
 
     pub fn stop(&self) -> FutureTaskState<E> {
+        trace!("stop {}", self.id());
         self.stop_with_result(Some(TaskError::Cancelled))
     }
 

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Condvar, Mutex};
 
-use crate::{Context, TError, WaitingTask};
+use crate::{Context, TError, WaitingTask, context::State};
 
 pub fn task_channel<E: TError>() -> (TaskSender<E>, TaskReceiver<E>) {
     let inner = Arc::new(Inner {
@@ -21,6 +21,7 @@ pub fn task_channel<E: TError>() -> (TaskSender<E>, TaskReceiver<E>) {
     (sender, receiver)
 }
 
+#[derive(Clone)]
 pub struct TaskSender<E: TError> {
     inner: Arc<Inner<E>>,
 }
@@ -36,10 +37,8 @@ impl<E: TError> TaskSender<E> {
         }
         self.inner.not_empty.notify_one();
     }
-}
 
-impl<E: TError> Drop for TaskSender<E> {
-    fn drop(&mut self) {
+    pub fn stop(&self) {
         let mut status = self.inner.status.lock().unwrap();
         status.is_stopped = true;
         self.inner.not_empty.notify_all();
@@ -58,6 +57,8 @@ impl<E: TError> TaskReceiver<E> {
                 return None;
             }
             if let Some(one) = status.next.take() {
+                status.current = Some(one.task.ctx.clone());
+                let _ = one.task.ctx.set_state(State::Preparing);
                 return Some(one);
             }
             status = self.inner.not_empty.wait(status).unwrap();

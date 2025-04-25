@@ -2,10 +2,11 @@ use std::{error::Error, fmt::Display, thread, time::Duration};
 
 use log::{LevelFilter, info, trace};
 use singleton_task::*;
+use tokio::time::sleep;
 
 #[derive(Debug, Clone)]
 enum Error1 {
-    A,
+    _A,
 }
 
 impl TError for Error1 {}
@@ -17,7 +18,6 @@ impl Display for Error1 {
 }
 
 struct Task1 {
-    a: i32,
     tx: Option<SyncSender<u32>>,
 }
 
@@ -48,7 +48,7 @@ impl TaskBuilder for Tasl1Builder {
     type Task = Task1;
 
     fn build(self, tx: SyncSender<u32>) -> Self::Task {
-        Task1 { a: 1, tx: Some(tx) }
+        Task1 { tx: Some(tx) }
     }
 }
 
@@ -60,6 +60,14 @@ async fn main() {
 
     let st = SingletonTask::<Error1>::new();
     let rx = st.start(Tasl1Builder {}).await.unwrap();
+    tokio::spawn({
+        let st = st.clone();
+        async move {
+            sleep(Duration::from_millis(200)).await;
+            info!("start 2");
+            st.start(Tasl1Builder {}).await.unwrap();
+        }
+    });
 
     while let Ok(v) = rx.recv() {
         println!("{}", v);
