@@ -7,10 +7,10 @@ use std::{
     thread,
 };
 
-use futures::{FutureExt, executor::block_on, select};
 use log::trace;
+use tokio::select;
 
-use crate::{TError, TaskError};
+use crate::{TError, TaskError, rt};
 
 #[derive(Clone)]
 pub struct Context<E: TError> {
@@ -119,10 +119,10 @@ impl<E: TError> ContextInner<E> {
         self.work_count += 1;
         trace!("[{:>6}] work count {}", ctx.id, self.work_count);
         thread::spawn(move || {
-            block_on(async move {
+            rt().block_on(async move {
                 select! {
-                    _ = fur.fuse() =>{}
-                    _ = ctx.wait_for(State::Stopping).fuse() => {}
+                    _ = fur =>{}
+                    _ = ctx.wait_for(State::Stopping) => {}
                 }
                 ctx.work_done();
             });

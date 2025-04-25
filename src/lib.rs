@@ -2,13 +2,12 @@ pub use std::sync::mpsc::{Receiver, SyncSender};
 use std::{
     error::Error,
     fmt::Display,
-    sync::{Arc, mpsc::sync_channel},
+    sync::{Arc, OnceLock, mpsc::sync_channel},
     thread,
 };
 
 use context::{FutureTaskState, State};
 pub use futures::{FutureExt, future::LocalBoxFuture};
-use futures::{executor::block_on, select};
 use log::{trace, warn};
 
 mod context;
@@ -16,6 +15,9 @@ mod task_chan;
 
 pub use context::Context;
 use task_chan::{TaskReceiver, TaskSender, task_channel};
+use tokio::{runtime::Runtime, select};
+
+static RT: OnceLock<Runtime> = OnceLock::new();
 
 pub trait TError: Error + Clone + Send + 'static {}
 
@@ -110,10 +112,10 @@ impl<E: TError> SingletonTask<E> {
         trace!("run task {}", next.task.ctx.id());
         let ctx = next.task.ctx.clone();
         let mut task = next.task.task;
-        match block_on(async {
+        match rt().block_on(async {
             select! {
-                res = task.on_start(ctx.clone()).fuse() => res.map_err(|e|e.into()),
-                res = ctx.wait_for(State::Stopping).fuse()=> res
+                res = task.on_start(ctx.clone()) => res.map_err(|e|e.into()),
+                res = ctx.wait_for(State::Stopping) => res
             }
         }) {
             Ok(_) => {
@@ -126,7 +128,7 @@ impl<E: TError> SingletonTask<E> {
             }
         }
 
-        block_on(async {
+        rt().block_on(async {
             let _ = ctx.wait_for(State::Stopping).await;
             let _ = task.on_stop(ctx.clone()).await;
             ctx.work_done();
@@ -188,6 +190,15 @@ impl<T, E: TError> TaskHandle<T, E> {
     pub fn recv(&self) -> Result<T, std::sync::mpsc::RecvError> {
         self.rx.recv()
     }
+}
+
+fn rt() -> &'static Runtime {
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    })
 }
 
 #[cfg(test)]

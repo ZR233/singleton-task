@@ -1,4 +1,4 @@
-use std::{error::Error, fmt::Display, thread, time::Duration};
+use std::{error::Error, fmt::Display, time::Duration};
 
 use log::{LevelFilter, info, trace};
 use singleton_task::*;
@@ -31,7 +31,7 @@ impl Task<Error1> for Task1 {
                 for i in 0..10 {
                     let _ = tx.send(i);
                     info!("[{}]send {}", id, i);
-                    thread::sleep(Duration::from_millis(100));
+                    sleep(Duration::from_millis(100)).await;
                 }
             });
 
@@ -67,6 +67,7 @@ async fn main() {
             sleep(Duration::from_millis(200)).await;
             info!("start 2");
             st.start(Tasl1Builder {}).await.unwrap();
+            info!("2 end");
         }
     });
 
@@ -74,7 +75,7 @@ async fn main() {
         println!("{}", v);
     }
 
-    rx.wait_for_stopped().await.unwrap();
+    assert!(rx.wait_for_stopped().await.is_err());
 
     info!("end");
 }
