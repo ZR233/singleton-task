@@ -6,17 +6,17 @@ use std::{
     thread,
 };
 
+pub use async_trait::async_trait;
+use tokio::{runtime::Runtime, select};
+
 use context::{FutureTaskState, State};
-pub use futures::{FutureExt, future::LocalBoxFuture};
 use log::{trace, warn};
 
 mod context;
 mod task_chan;
 
-pub use async_trait::async_trait;
 pub use context::Context;
 use task_chan::{TaskReceiver, TaskSender, task_channel};
-use tokio::{runtime::Runtime, select};
 
 static RT: OnceLock<Runtime> = OnceLock::new();
 
