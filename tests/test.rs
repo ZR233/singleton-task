@@ -26,23 +26,21 @@ struct Task1 {
     tx: Option<SyncSender<u32>>,
 }
 
+#[async_trait]
 impl Task<Error1> for Task1 {
-    fn on_start(&mut self, ctx: Context<Error1>) -> LocalBoxFuture<'_, Result<(), Error1>> {
-        async move {
-            trace!("[{}]on_start", ctx.id());
-            let tx = self.tx.take().unwrap();
-            let id = ctx.id();
-            ctx.spawn(async move {
-                for i in 0..10 {
-                    let _ = tx.send(i);
-                    info!("[{}]send {}", id, i);
-                    sleep(Duration::from_millis(100)).await;
-                }
-            });
+    async fn on_start(&mut self, ctx: Context<Error1>) -> Result<(), Error1> {
+        trace!("[{}]on_start", ctx.id());
+        let tx = self.tx.take().unwrap();
+        let id = ctx.id();
+        ctx.spawn(async move {
+            for i in 0..10 {
+                let _ = tx.send(i);
+                info!("[{}]send {}", id, i);
+                sleep(Duration::from_millis(100)).await;
+            }
+        });
 
-            Ok(())
-        }
-        .boxed_local()
+        Ok(())
     }
 }
 

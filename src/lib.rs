@@ -13,6 +13,7 @@ use log::{trace, warn};
 mod context;
 mod task_chan;
 
+pub use async_trait::async_trait;
 pub use context::Context;
 use task_chan::{TaskReceiver, TaskSender, task_channel};
 use tokio::{runtime::Runtime, select};
@@ -53,22 +54,17 @@ pub trait TaskBuilder {
     }
 }
 
+#[async_trait]
 pub trait Task<E: TError>: Send + 'static {
-    fn on_start(&mut self, ctx: Context<E>) -> LocalBoxFuture<'_, Result<(), E>> {
+    async fn on_start(&mut self, ctx: Context<E>) -> Result<(), E> {
         drop(ctx);
-        async {
-            trace!("on_start");
-            Ok(())
-        }
-        .boxed_local()
+        trace!("on_start");
+        Ok(())
     }
-    fn on_stop(&mut self, ctx: Context<E>) -> LocalBoxFuture<'_, Result<(), E>> {
+    async fn on_stop(&mut self, ctx: Context<E>) -> Result<(), E> {
         drop(ctx);
-        async {
-            trace!("on_stop");
-            Ok(())
-        }
-        .boxed_local()
+        trace!("on_stop");
+        Ok(())
     }
 }
 
