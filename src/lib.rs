@@ -96,7 +96,7 @@ impl<E: TError> SingletonTask<E> {
     }
 
     async fn work_deal_start(rx: TaskReceiver<E>) {
-        while let Some(next) = rx.recv() {
+        while let Some(next) = rx.recv().await {
             let id = next.task.ctx.id();
             if let Err(e) = Self::work_start_task(next).await {
                 warn!("task [{}] error: {}", id, e);

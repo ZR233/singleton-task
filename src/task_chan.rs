@@ -1,4 +1,7 @@
-use std::sync::{Arc, Condvar, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    task::{Poll, Waker},
+};
 
 use crate::{Context, TError, WaitingTask, context::State};
 
@@ -8,8 +11,8 @@ pub fn task_channel<E: TError>() -> (TaskSender<E>, TaskReceiver<E>) {
             next: None,
             current: None,
             is_stopped: false,
+            wakers: vec![],
         }),
-        not_empty: Condvar::new(),
     });
 
     let sender = TaskSender {
@@ -35,13 +38,21 @@ impl<E: TError> TaskSender<E> {
         if let Some(current) = &g.current {
             current.stop();
         }
-        self.inner.not_empty.notify_one();
+        for w in g.wakers.iter() {
+            w.wake_by_ref();
+        }
+        g.wakers.clear();
     }
 
     pub fn stop(&self) {
         let mut status = self.inner.status.lock().unwrap();
         status.is_stopped = true;
-        self.inner.not_empty.notify_all();
+
+        let mut g = self.inner.status.lock().unwrap();
+        for w in g.wakers.iter() {
+            w.wake_by_ref();
+        }
+        g.wakers.clear();
     }
 }
 
@@ -50,29 +61,42 @@ pub struct TaskReceiver<E: TError> {
 }
 
 impl<E: TError> TaskReceiver<E> {
-    pub fn recv(&self) -> Option<WaitingTask<E>> {
-        let mut status = self.inner.status.lock().unwrap();
-        loop {
-            if status.is_stopped {
-                return None;
-            }
-            if let Some(one) = status.next.take() {
-                status.current = Some(one.task.ctx.clone());
-                let _ = one.task.ctx.set_state(State::Preparing);
-                return Some(one);
-            }
-            status = self.inner.not_empty.wait(status).unwrap();
+    pub fn recv(&self) -> impl Future<Output = Option<WaitingTask<E>>> {
+        WaitRcv {
+            inner: self.inner.clone(),
         }
+    }
+}
+
+struct WaitRcv<E: TError> {
+    inner: Arc<Inner<E>>,
+}
+
+impl<E: TError> Future for WaitRcv<E> {
+    type Output = Option<WaitingTask<E>>;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let mut status = self.inner.status.lock().unwrap();
+        if status.is_stopped {
+            return Poll::Ready(None);
+        }
+        if let Some(one) = status.next.take() {
+            status.current = Some(one.task.ctx.clone());
+            let _ = one.task.ctx.set_state(State::Preparing);
+            return Poll::Ready(Some(one));
+        }
+        status.wakers.push(cx.waker().clone());
+        Poll::Pending
     }
 }
 
 struct Inner<E: TError> {
     status: Mutex<Status<E>>,
-    not_empty: Condvar,
 }
 
 struct Status<E: TError> {
     next: Option<WaitingTask<E>>,
     current: Option<Context<E>>,
     is_stopped: bool,
+    wakers: Vec<Waker>,
 }
