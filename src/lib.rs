@@ -80,19 +80,15 @@ struct WaitingTask<E: TError> {
 #[derive(Clone)]
 pub struct SingletonTask<E: TError> {
     tx: TaskSender<E>,
-    _drop: Arc<TaskDrop<E>>,
 }
 
 impl<E: TError> SingletonTask<E> {
     pub fn new() -> Self {
         let (tx, rx) = task_channel::<E>();
 
-        rt().spawn(Self::work_deal_start(rx));
+        tokio::spawn(Self::work_deal_start(rx));
 
-        Self {
-            _drop: Arc::new(TaskDrop { tx: tx.clone() }),
-            tx,
-        }
+        Self { tx }
     }
 
     async fn work_deal_start(rx: TaskReceiver<E>) {
@@ -102,6 +98,7 @@ impl<E: TError> SingletonTask<E> {
                 warn!("task [{}] error: {}", id, e);
             }
         }
+        trace!("task work done");
     }
 
     async fn work_start_task(next: WaitingTask<E>) -> Result<(), TaskError<E>> {
@@ -126,7 +123,7 @@ impl<E: TError> SingletonTask<E> {
         let _ = task.on_stop(ctx.clone()).await;
         ctx.work_done();
         let _ = ctx.wait_for(State::Stopped).await;
-
+        trace!("task {} stopped", ctx.id());
         Ok(())
     }
 
@@ -148,15 +145,6 @@ impl<E: TError> SingletonTask<E> {
         ctx.wait_for(State::Running).await?;
 
         Ok(TaskHandle { rx, ctx })
-    }
-}
-
-struct TaskDrop<E: TError> {
-    tx: TaskSender<E>,
-}
-impl<E: TError> Drop for TaskDrop<E> {
-    fn drop(&mut self) {
-        self.tx.stop();
     }
 }
 
@@ -182,13 +170,4 @@ impl<T, E: TError> TaskHandle<T, E> {
     pub fn recv(&self) -> Result<T, std::sync::mpsc::RecvError> {
         self.rx.recv()
     }
-}
-
-fn rt() -> &'static Runtime {
-    RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-    })
 }

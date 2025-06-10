@@ -4,14 +4,13 @@ use std::{
         atomic::{AtomicU32, Ordering},
     },
     task::{Poll, Waker},
-    thread,
 };
 
 use log::trace;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
-use crate::{TError, TaskError, rt};
+use crate::{TError, TaskError};
 
 #[derive(Clone)]
 pub struct Context<E: TError> {
@@ -67,6 +66,10 @@ impl<E: TError> Context<E> {
         let mut g = self.inner.lock().unwrap();
         g.work_count -= 1;
         trace!("[{:>6}] work count {}", self.id, g.work_count);
+        if g.work_count == 1 && g.state == State::Running {
+            let _ = g.set_state(State::Stopping);
+        }
+
         if g.work_count == 0 {
             let _ = g.set_state(State::Stopped);
         }
@@ -127,15 +130,14 @@ impl<E: TError> ContextInner<E> {
 
         self.work_count += 1;
         trace!("[{:>6}] work count {}", ctx.id, self.work_count);
-        thread::spawn(move || {
-            rt().block_on(async move {
-                select! {
-                    _ = fur =>{}
-                    _ = ctx.cancel.cancelled() => {}
-                    _ = ctx.wait_for(State::Stopping) => {}
-                }
-                ctx.work_done();
-            });
+
+        tokio::spawn(async move {
+            select! {
+                _ = fur =>{}
+                _ = ctx.cancel.cancelled() => {}
+                _ = ctx.wait_for(State::Stopping) => {}
+            }
+            ctx.work_done();
         });
     }
 }

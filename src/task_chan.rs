@@ -3,6 +3,8 @@ use std::{
     task::{Poll, Waker},
 };
 
+use log::trace;
+
 use crate::{Context, TError, WaitingTask, context::State};
 
 pub fn task_channel<E: TError>() -> (TaskSender<E>, TaskReceiver<E>) {
@@ -16,7 +18,9 @@ pub fn task_channel<E: TError>() -> (TaskSender<E>, TaskReceiver<E>) {
     });
 
     let sender = TaskSender {
-        inner: Arc::clone(&inner),
+        inner: Arc::new(TaskSenderInner {
+            inner: Arc::clone(&inner),
+        }),
     };
 
     let receiver = TaskReceiver { inner };
@@ -26,12 +30,28 @@ pub fn task_channel<E: TError>() -> (TaskSender<E>, TaskReceiver<E>) {
 
 #[derive(Clone)]
 pub struct TaskSender<E: TError> {
+    inner: Arc<TaskSenderInner<E>>,
+}
+
+struct TaskSenderInner<E: TError> {
     inner: Arc<Inner<E>>,
+}
+impl<E: TError> TaskSenderInner<E> {
+    fn stop(&self) {
+        let mut status = self.inner.status.lock().unwrap();
+        status.is_stopped = true;
+
+        for w in status.wakers.iter() {
+            w.wake_by_ref();
+        }
+        status.wakers.clear();
+        trace!("manager stopped");
+    }
 }
 
 impl<E: TError> TaskSender<E> {
     pub fn send(&self, item: WaitingTask<E>) {
-        let mut g = self.inner.status.lock().unwrap();
+        let mut g = self.inner.inner.status.lock().unwrap();
         if let Some(old) = g.next.replace(item) {
             old.task.ctx.stop();
         }
@@ -43,16 +63,12 @@ impl<E: TError> TaskSender<E> {
         }
         g.wakers.clear();
     }
+}
 
-    pub fn stop(&self) {
-        let mut status = self.inner.status.lock().unwrap();
-        status.is_stopped = true;
-
-        let mut g = self.inner.status.lock().unwrap();
-        for w in g.wakers.iter() {
-            w.wake_by_ref();
-        }
-        g.wakers.clear();
+impl<E: TError> Drop for TaskSenderInner<E> {
+    fn drop(&mut self) {
+        trace!("TaskSender drop");
+        self.stop();
     }
 }
 

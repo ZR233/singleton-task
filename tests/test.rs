@@ -57,13 +57,13 @@ impl TaskBuilder for Tasl1Builder {
 }
 
 fn init_log() {
-    env_logger::builder()
+    let _ = env_logger::builder()
         .filter_level(LevelFilter::Trace)
         .is_test(true)
-        .init();
+        .try_init();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_stop() {
     init_log();
 
@@ -120,4 +120,6 @@ async fn test_stop2() {
     while let Ok(v) = t2.recv() {
         debug!("2 rcv  {v}");
     }
+
+    assert!(true);
 }

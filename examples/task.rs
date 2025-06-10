@@ -58,13 +58,13 @@ async fn main() {
 
     let st = SingletonTask::<Error1>::new();
     let rx = st.start(Tasl1Builder {}).await.unwrap();
-    tokio::spawn({
+    let h2 = tokio::spawn({
         let st = st.clone();
         async move {
             sleep(Duration::from_millis(200)).await;
             info!("start 2");
             st.start(Tasl1Builder {}).await.unwrap();
-            info!("2 end");
+            info!("start 2 ok");
         }
     });
 
@@ -73,6 +73,9 @@ async fn main() {
     }
 
     assert!(rx.wait_for_stopped().await.is_err());
+    info!("task 1 stopped");
+
+    let _ = h2.await;
 
     info!("end");
 }
