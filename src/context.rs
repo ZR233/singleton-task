@@ -4,10 +4,11 @@ use std::{
         atomic::{AtomicU32, Ordering},
     },
     task::{Poll, Waker},
+    thread,
 };
 
 use log::trace;
-use tokio::select;
+use tokio::{runtime::Handle, select};
 use tokio_util::sync::CancellationToken;
 
 use crate::{TError, TaskError};
@@ -130,14 +131,16 @@ impl<E: TError> ContextInner<E> {
 
         self.work_count += 1;
         trace!("[{:>6}] work count {}", ctx.id, self.work_count);
-
-        tokio::spawn(async move {
-            select! {
-                _ = fur =>{}
-                _ = ctx.cancel.cancelled() => {}
-                _ = ctx.wait_for(State::Stopping) => {}
-            }
-            ctx.work_done();
+        let handle = Handle::current();
+        thread::spawn(move || {
+            handle.block_on(async move {
+                select! {
+                    _ = fur =>{}
+                    _ = ctx.cancel.cancelled() => {}
+                    _ = ctx.wait_for(State::Stopping) => {}
+                }
+                ctx.work_done();
+            })
         });
     }
 }
