@@ -1,6 +1,6 @@
 [package]
 name = "singleton-task"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["周睿 <zrufo747@outlook.com>"]
 description = "A singleton task based on tokio"
@@ -13,6 +13,7 @@ categories = ["asynchronous", "concurrency"]
 log = "0.4"
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
+tokio-util = "0.7"
 
 [dev-dependencies]
 env_logger = "0.11"

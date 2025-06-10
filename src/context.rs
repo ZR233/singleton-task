@@ -9,6 +9,7 @@ use std::{
 
 use log::trace;
 use tokio::select;
+use tokio_util::sync::CancellationToken;
 
 use crate::{TError, TaskError, rt};
 
@@ -16,6 +17,7 @@ use crate::{TError, TaskError, rt};
 pub struct Context<E: TError> {
     id: u32,
     inner: Arc<Mutex<ContextInner<E>>>,
+    cancel: CancellationToken,
 }
 
 impl<E: TError> Context<E> {
@@ -35,6 +37,10 @@ impl<E: TError> Context<E> {
         self.stop_with_result(Some(TaskError::Cancelled))
     }
 
+    pub fn is_active(&self) -> bool {
+        !self.cancel.is_cancelled()
+    }
+
     pub fn stop_with_result(&self, res: Option<TaskError<E>>) -> FutureTaskState<E> {
         let fur = self.wait_for(State::Stopped);
         let mut g = self.inner.lock().unwrap();
@@ -44,6 +50,8 @@ impl<E: TError> Context<E> {
         let _ = g.set_state(State::Stopping);
         g.error = res;
         g.wake_all();
+        drop(g);
+        self.cancel.cancel();
         fur
     }
 
@@ -77,6 +85,7 @@ impl<E: TError> Default for Context<E> {
                 work_count: 1,
                 ..Default::default()
             })),
+            cancel: CancellationToken::new(),
         }
     }
 }
@@ -122,6 +131,7 @@ impl<E: TError> ContextInner<E> {
             rt().block_on(async move {
                 select! {
                     _ = fur =>{}
+                    _ = ctx.cancel.cancelled() => {}
                     _ = ctx.wait_for(State::Stopping) => {}
                 }
                 ctx.work_done();
