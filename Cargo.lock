@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "singleton-task"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "env_logger",

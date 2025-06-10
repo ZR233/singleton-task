@@ -87,7 +87,7 @@ impl<E: TError> SingletonTask<E> {
     pub fn new() -> Self {
         let (tx, rx) = task_channel::<E>();
 
-        thread::spawn(move || Self::work_deal_start(rx));
+        rt().spawn(Self::work_deal_start(rx));
 
         Self {
             _drop: Arc::new(TaskDrop { tx: tx.clone() }),
@@ -95,25 +95,23 @@ impl<E: TError> SingletonTask<E> {
         }
     }
 
-    fn work_deal_start(rx: TaskReceiver<E>) {
+    async fn work_deal_start(rx: TaskReceiver<E>) {
         while let Some(next) = rx.recv() {
             let id = next.task.ctx.id();
-            if let Err(e) = Self::work_start_task(next) {
+            if let Err(e) = Self::work_start_task(next).await {
                 warn!("task [{}] error: {}", id, e);
             }
         }
     }
 
-    fn work_start_task(next: WaitingTask<E>) -> Result<(), TaskError<E>> {
+    async fn work_start_task(next: WaitingTask<E>) -> Result<(), TaskError<E>> {
         trace!("run task {}", next.task.ctx.id());
         let ctx = next.task.ctx.clone();
         let mut task = next.task.task;
-        match rt().block_on(async {
-            select! {
-                res = task.on_start(ctx.clone()) => res.map_err(|e|e.into()),
-                res = ctx.wait_for(State::Stopping) => res
-            }
-        }) {
+        match select! {
+            res = task.on_start(ctx.clone()) => res.map_err(|e|e.into()),
+            res = ctx.wait_for(State::Stopping) => res
+        } {
             Ok(_) => {
                 if ctx.set_state(State::Running).is_err() {
                     return Err(TaskError::Cancelled);
@@ -124,12 +122,10 @@ impl<E: TError> SingletonTask<E> {
             }
         }
 
-        rt().block_on(async {
-            let _ = ctx.wait_for(State::Stopping).await;
-            let _ = task.on_stop(ctx.clone()).await;
-            ctx.work_done();
-            let _ = ctx.wait_for(State::Stopped).await;
-        });
+        let _ = ctx.wait_for(State::Stopping).await;
+        let _ = task.on_stop(ctx.clone()).await;
+        ctx.work_done();
+        let _ = ctx.wait_for(State::Stopped).await;
 
         Ok(())
     }
@@ -190,7 +186,7 @@ impl<T, E: TError> TaskHandle<T, E> {
 
 fn rt() -> &'static Runtime {
     RT.get_or_init(|| {
-        tokio::runtime::Builder::new_current_thread()
+        tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap()
