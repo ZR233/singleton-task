@@ -1,13 +1,8 @@
 pub use std::sync::mpsc::{Receiver, SyncSender};
-use std::{
-    error::Error,
-    fmt::Display,
-    sync::{Arc, OnceLock, mpsc::sync_channel},
-    thread,
-};
+use std::{error::Error, fmt::Display, sync::mpsc::sync_channel};
 
 pub use async_trait::async_trait;
-use tokio::{runtime::Runtime, select};
+use tokio::select;
 
 use context::{FutureTaskState, State};
 use log::{trace, warn};
@@ -17,8 +12,6 @@ mod task_chan;
 
 pub use context::Context;
 use task_chan::{TaskReceiver, TaskSender, task_channel};
-
-static RT: OnceLock<Runtime> = OnceLock::new();
 
 pub trait TError: Error + Clone + Send + 'static {}
 

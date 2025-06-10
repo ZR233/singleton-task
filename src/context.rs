@@ -135,9 +135,15 @@ impl<E: TError> ContextInner<E> {
         thread::spawn(move || {
             handle.block_on(async move {
                 select! {
-                    _ = fur =>{}
-                    _ = ctx.cancel.cancelled() => {}
-                    _ = ctx.wait_for(State::Stopping) => {}
+                    _ = fur =>{
+                        trace!("[{:>6}] exit: finish", ctx.id);
+                    }
+                    _ = ctx.cancel.cancelled() => {
+                        trace!("[{:>6}] exit: cancel token", ctx.id);
+                    }
+                    _ = ctx.wait_for(State::Stopping) => {
+                        trace!("[{:>6}] exit: stopping", ctx.id);
+                    }
                 }
                 ctx.work_done();
             })
