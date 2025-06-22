@@ -58,7 +58,6 @@ impl TaskBuilder for Tasl1Builder {
 
 #[derive(Debug, Clone)]
 enum Error2 {
-    Timeout,
     Custom(String),
 }
 
@@ -67,7 +66,6 @@ impl Error for Error2 {}
 impl Display for Error2 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error2::Timeout => write!(f, "Timeout"),
             Error2::Custom(msg) => write!(f, "Custom: {}", msg),
         }
     }
