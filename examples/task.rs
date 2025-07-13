@@ -13,7 +13,7 @@ impl TError for Error1 {}
 impl Error for Error1 {}
 impl Display for Error1 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -29,7 +29,7 @@ impl Task<Error1> for Task1 {
         ctx.spawn(async move {
             for i in 0..10 {
                 let _ = tx.send(i);
-                info!("[{}]send {}", id, i);
+                info!("[{id}]send {i}");
                 sleep(Duration::from_millis(100)).await;
             }
         });
@@ -69,7 +69,7 @@ async fn main() {
     });
 
     while let Ok(v) = rx.recv() {
-        println!("{}", v);
+        println!("{v}");
     }
 
     assert!(rx.wait_for_stopped().await.is_err());
