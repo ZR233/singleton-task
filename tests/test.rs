@@ -18,7 +18,7 @@ impl TError for Error1 {}
 impl Error for Error1 {}
 impl Display for Error1 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -35,7 +35,7 @@ impl Task<Error1> for Task1 {
         ctx.spawn(async move {
             for i in 0..10 {
                 let _ = tx.send(i);
-                info!("[{}]send {}", id, i);
+                info!("[{id}]send {i}");
                 sleep(Duration::from_millis(100)).await;
             }
         });
@@ -66,7 +66,7 @@ impl Error for Error2 {}
 impl Display for Error2 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error2::Custom(msg) => write!(f, "Custom: {}", msg),
+            Error2::Custom(msg) => write!(f, "Custom: {msg}"),
         }
     }
 }
@@ -89,13 +89,13 @@ impl Task<Error1> for LongRunningTask {
 
         ctx.spawn(async move {
             for i in 0..20 {
-                if tx.send(format!("{}:{}", task_name, i)).is_err() {
+                if tx.send(format!("{task_name}:{i}")).is_err() {
                     break;
                 }
-                info!("[{}] {} sending: {}", id, task_name, i);
+                info!("[{id}] {task_name} sending: {i}");
                 sleep(Duration::from_millis(duration_ms)).await;
             }
-            info!("[{}] {} finished sending", id, task_name);
+            info!("[{id}] {task_name} finished sending");
         });
 
         Ok(())
@@ -148,7 +148,7 @@ impl Task<Error2> for ErrorTask {
                 if tx.send(i).is_err() {
                     break;
                 }
-                info!("[{}] ErrorTask sending: {}", id, i);
+                info!("[{id}] ErrorTask sending: {i}");
                 sleep(Duration::from_millis(50)).await;
             }
         });
@@ -205,7 +205,7 @@ impl Task<Error1> for CounterTask {
                 if tx.send((count, task_id.clone())).is_err() {
                     break;
                 }
-                info!("[{}] CounterTask {} count: {}", id, task_id, count);
+                info!("[{id}] CounterTask {task_id} count: {count}");
                 sleep(Duration::from_millis(100)).await;
             }
         });
@@ -313,23 +313,23 @@ async fn test_concurrent_task_start() {
         let st_clone = st_arc.clone();
         let handle = tokio::spawn(async move {
             let builder = LongRunningTaskBuilder {
-                task_name: format!("Task{}", i),
+                task_name: format!("Task{i}"),
                 duration_ms: 50,
             };
 
             match st_clone.start(builder).await {
                 Ok(rx) => {
-                    debug!("Task {} started successfully", i);
+                    debug!("Task {i} started successfully");
                     // 尝试接收一些数据
                     for _ in 0..3 {
                         if let Ok(msg) = rx.recv() {
-                            debug!("Task {} received: {}", i, msg);
+                            debug!("Task {i} received: {msg}");
                         }
                     }
                     Ok(i)
                 }
                 Err(e) => {
-                    debug!("Task {} failed to start: {}", i, e);
+                    debug!("Task {i} failed to start: {e}");
                     Err(e)
                 }
             }
@@ -342,17 +342,17 @@ async fn test_concurrent_task_start() {
     for handle in handles {
         match handle.await.unwrap() {
             Ok(task_id) => {
-                debug!("Task {} completed successfully", task_id);
+                debug!("Task {task_id} completed successfully");
                 successful_tasks += 1;
             }
             Err(e) => {
-                debug!("Task failed: {}", e);
+                debug!("Task failed: {e}");
             }
         }
     }
 
     // 由于是单例任务，只有最后一个任务会真正运行
-    debug!("Total successful task starts: {}", successful_tasks);
+    debug!("Total successful task starts: {successful_tasks}");
     assert!(successful_tasks >= 1);
 }
 
@@ -368,17 +368,17 @@ async fn test_rapid_task_replacement() {
     // 快速启动多个任务，测试任务替换
     for i in 0..5 {
         let builder = LongRunningTaskBuilder {
-            task_name: format!("RapidTask{}", i),
+            task_name: format!("RapidTask{i}"),
             duration_ms: 200,
         };
 
         match st.start(builder).await {
             Ok(rx) => {
-                debug!("RapidTask{} started", i);
+                debug!("RapidTask{i} started");
                 last_rx = Some(rx);
             }
             Err(e) => {
-                debug!("RapidTask{} failed: {}", i, e);
+                debug!("RapidTask{i} failed: {e}");
             }
         }
 
@@ -395,7 +395,7 @@ async fn test_rapid_task_replacement() {
         while start.elapsed() < timeout {
             match rx.rx.try_recv() {
                 Ok(msg) => {
-                    debug!("Final task received: {}", msg);
+                    debug!("Final task received: {msg}");
                     received_count += 1;
                     if received_count >= 3 {
                         break;
@@ -450,17 +450,17 @@ async fn test_error_handling_multithreaded() {
         let (task_id, result) = handle.await.unwrap();
         match result {
             Ok(_) => {
-                debug!("Task {} succeeded", task_id);
+                debug!("Task {task_id} succeeded");
                 success_count += 1;
             }
             Err(e) => {
-                debug!("Task {} failed: {}", task_id, e);
+                debug!("Task {task_id} failed: {e}");
                 error_count += 1;
             }
         }
     }
 
-    debug!("Success: {}, Errors: {}", success_count, error_count);
+    debug!("Success: {success_count}, Errors: {error_count}");
     assert!(error_count > 0, "Should have some errors");
     // 放宽条件，只要总数正确即可
     assert!(
@@ -481,13 +481,13 @@ async fn test_multiple_task_startup() {
     // 快速启动多个任务并接收数据
     for i in 0..3 {
         let builder = LongRunningTaskBuilder {
-            task_name: format!("MultiTask{}", i),
+            task_name: format!("MultiTask{i}"),
             duration_ms: 50,
         };
 
         match st.start(builder).await {
             Ok(handle) => {
-                debug!("MultiTask{} started", i);
+                debug!("MultiTask{i} started");
 
                 // 接收一些消息
                 let timeout = Duration::from_millis(500);
@@ -497,7 +497,7 @@ async fn test_multiple_task_startup() {
                 while start.elapsed() < timeout && received_count < 3 {
                     match handle.rx.try_recv() {
                         Ok(msg) => {
-                            debug!("MultiTask{} received: {}", i, msg);
+                            debug!("MultiTask{i} received: {msg}");
                             received_count += 1;
                             total_messages += 1;
                         }
@@ -508,7 +508,7 @@ async fn test_multiple_task_startup() {
                 }
             }
             Err(e) => {
-                debug!("MultiTask{} failed: {}", i, e);
+                debug!("MultiTask{i} failed: {e}");
             }
         }
 
@@ -516,7 +516,7 @@ async fn test_multiple_task_startup() {
         sleep(Duration::from_millis(100)).await;
     }
 
-    debug!("Total messages received: {}", total_messages);
+    debug!("Total messages received: {total_messages}");
     assert!(total_messages > 0, "Should receive some messages");
 }
 
@@ -548,7 +548,7 @@ async fn test_concurrent_stop() {
             // 短暂延迟后停止
             sleep(Duration::from_millis(i * 20)).await;
             let result = ctx_clone.stop().await;
-            debug!("Stop attempt {} result: {:?}", i, result);
+            debug!("Stop attempt {i} result: {result:?}");
             result
         });
         stop_handles.push(stop_handle);
@@ -563,7 +563,7 @@ async fn test_concurrent_stop() {
         while start.elapsed() < timeout {
             match handle.recv() {
                 Ok(msg) => {
-                    debug!("Read message: {}", msg);
+                    debug!("Read message: {msg}");
                     messages.push(msg);
                 }
                 Err(_) => {
@@ -585,13 +585,13 @@ async fn test_concurrent_stop() {
 
     let messages = read_handle.await.unwrap();
 
-    debug!("Stop results: {:?}", stop_results);
+    debug!("Stop results: {stop_results:?}");
     debug!("Total messages read: {}", messages.len());
 
     // 检查是否至少接收到了一些消息（证明任务在运行）
     // 停止操作可能都失败，这在单例任务中是正常的
     let successful_stops = stop_results.iter().filter(|r| r.is_ok()).count();
-    debug!("Successful stops: {}", successful_stops);
+    debug!("Successful stops: {successful_stops}");
     // 测试成功条件：要么有成功的停止，要么接收到了消息（证明任务曾经运行）
     assert!(
         successful_stops > 0 || !messages.is_empty(),
@@ -617,7 +617,7 @@ async fn test_high_concurrency() {
         let handle = tokio::spawn(async move {
             let builder = CounterTaskBuilder {
                 counter: counter_clone,
-                task_id: format!("HighConcurrency{}", i),
+                task_id: format!("HighConcurrency{i}"),
             };
 
             match st_clone.start(builder).await {
@@ -628,7 +628,7 @@ async fn test_high_concurrency() {
 
                     while start.elapsed() < timeout && received < 3 {
                         if let Ok((count, task_id)) = rx.recv() {
-                            debug!("Task {} - Count: {}, TaskId: {}", i, count, task_id);
+                            debug!("Task {i} - Count: {count}, TaskId: {task_id}");
                             received += 1;
                         }
                     }
@@ -636,7 +636,7 @@ async fn test_high_concurrency() {
                     Ok(received)
                 }
                 Err(e) => {
-                    debug!("Task {} failed: {}", i, e);
+                    debug!("Task {i} failed: {e}");
                     Err(e)
                 }
             }
@@ -662,9 +662,9 @@ async fn test_high_concurrency() {
 
     let final_counter = *counter.lock().unwrap();
 
-    debug!("Successful starts: {}", successful_starts);
-    debug!("Total messages received: {}", total_received);
-    debug!("Final counter value: {}", final_counter);
+    debug!("Successful starts: {successful_starts}");
+    debug!("Total messages received: {total_received}");
+    debug!("Final counter value: {final_counter}");
 
     assert!(successful_starts > 0, "Should have successful task starts");
     assert!(final_counter > 0, "Counter should be incremented");

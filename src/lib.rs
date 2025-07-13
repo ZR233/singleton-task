@@ -31,7 +31,7 @@ impl<E: TError> Display for TaskError<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Cancelled => write!(f, "Cancelled"),
-            Self::Error(e) => write!(f, "{}", e),
+            Self::Error(e) => write!(f, "{e}"),
         }
     }
 }
@@ -88,7 +88,7 @@ impl<E: TError> SingletonTask<E> {
         while let Some(next) = rx.recv().await {
             let id = next.task.ctx.id();
             if let Err(e) = Self::work_start_task(next).await {
-                warn!("task [{}] error: {}", id, e);
+                warn!("task [{id}] error: {e}");
             }
         }
         trace!("task work done");
