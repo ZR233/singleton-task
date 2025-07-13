@@ -1,5 +1,9 @@
 pub use std::sync::mpsc::{Receiver, SyncSender};
-use std::{error::Error, fmt::Display, sync::mpsc::sync_channel};
+use std::{
+    error::Error,
+    fmt::Display,
+    sync::mpsc::sync_channel,
+};
 
 pub use async_trait::async_trait;
 use tokio::select;
@@ -108,7 +112,7 @@ impl<E: TError> SingletonTask<E> {
                 };
             }
             Err(e) => {
-                ctx.stop_with_result(Some(e));
+                ctx.stop_with_terr(e);
             }
         }
 

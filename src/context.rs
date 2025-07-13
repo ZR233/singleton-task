@@ -4,11 +4,10 @@ use std::{
         atomic::{AtomicU32, Ordering},
     },
     task::{Poll, Waker},
-    thread,
 };
 
 use log::trace;
-use tokio::{runtime::Handle, select};
+use tokio::{runtime::Handle, select, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{TError, TaskError};
@@ -34,33 +33,51 @@ impl<E: TError> Context<E> {
     }
 
     pub fn stop(&self) -> FutureTaskState<E> {
-        self.stop_with_result(Some(TaskError::Cancelled))
+        self._stop(Some(TaskError::Cancelled))
     }
 
     pub fn is_active(&self) -> bool {
         !self.cancel.is_cancelled()
     }
 
-    pub fn stop_with_result(&self, res: Option<TaskError<E>>) -> FutureTaskState<E> {
+    fn _stop(&self, err: Option<TaskError<E>>) -> FutureTaskState<E> {
         let fur = self.wait_for(State::Stopped);
         let mut g = self.inner.lock().unwrap();
         if g.state >= State::Stopping {
             return fur;
         }
         let _ = g.set_state(State::Stopping);
-        g.error = res;
+        g.error = err;
         g.wake_all();
         drop(g);
         self.cancel.cancel();
         fur
     }
 
-    pub fn spawn<F>(&self, fut: F)
+    pub(crate) fn stop_with_terr(&self, err: TaskError<E>) -> FutureTaskState<E> {
+        self._stop(Some(err))
+    }
+
+    pub fn stop_with_err(&self, err: E) -> FutureTaskState<E> {
+        self._stop(Some(TaskError::Error(err)))
+    }
+
+    pub fn spawn<F>(&self, fut: F) -> JoinHandle<Result<F::Output, TaskError<E>>>
     where
         F: Future + Send + 'static,
+        F::Output: Send + 'static,
     {
         let mut g = self.inner.lock().unwrap();
-        g.spawn(self, fut);
+        g.spawn(self, fut)
+    }
+
+    pub fn spawn_blocking<F, R>(&self, f: F) -> JoinHandle<Result<R, TaskError<E>>>
+    where
+        F: FnOnce(&Context<E>) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let mut g = self.inner.lock().unwrap();
+        g.spawn_blocking(self, f)
     }
 
     pub(crate) fn work_done(&self) {
@@ -120,34 +137,59 @@ impl<E: TError> ContextInner<E> {
         Ok(())
     }
 
-    fn spawn<F>(&mut self, ctx: &Context<E>, fur: F)
+    fn spawn<F>(&mut self, ctx: &Context<E>, fur: F) -> JoinHandle<Result<F::Output, TaskError<E>>>
     where
         F: Future + Send + 'static,
+        F::Output: Send + 'static,
     {
         let ctx = ctx.clone();
-        if matches!(self.state, State::Stopping | State::Stopped) {
-            return;
-        }
 
         self.work_count += 1;
         trace!("[{:>6}] work count {}", ctx.id, self.work_count);
         let handle = Handle::current();
-        thread::spawn(move || {
-            handle.block_on(async move {
-                select! {
-                    _ = fur =>{
-                        trace!("[{:>6}] exit: finish", ctx.id);
-                    }
-                    _ = ctx.cancel.cancelled() => {
-                        trace!("[{:>6}] exit: cancel token", ctx.id);
-                    }
-                    _ = ctx.wait_for(State::Stopping) => {
-                        trace!("[{:>6}] exit: stopping", ctx.id);
-                    }
+
+        handle.spawn(async move {
+            let mut res = Err(TaskError::Cancelled);
+            select! {
+                r = fur =>{
+                    trace!("[{:>6}] exit: finish", ctx.id);
+                    res = Ok(r);
                 }
-                ctx.work_done();
-            })
-        });
+                _ = ctx.cancel.cancelled() => {
+                    trace!("[{:>6}] exit: cancel token", ctx.id);
+                }
+                _ = ctx.wait_for(State::Stopping) => {
+                    trace!("[{:>6}] exit: stopping", ctx.id);
+                }
+            }
+            ctx.work_done();
+            res
+        })
+    }
+
+    fn spawn_blocking<F, R>(
+        &mut self,
+        ctx: &Context<E>,
+        fur: F,
+    ) -> JoinHandle<Result<R, TaskError<E>>>
+    where
+        F: FnOnce(&Context<E>) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let ctx = ctx.clone();
+
+        self.work_count += 1;
+        trace!("[{:>6}] work count {}", ctx.id, self.work_count);
+        let handle = Handle::current();
+
+        handle.spawn_blocking(move || {
+            if !ctx.is_active() {
+                return Err(TaskError::Cancelled);
+            }
+            let r = fur(&ctx);
+            ctx.work_done();
+            Ok(r)
+        })
     }
 }
 
