@@ -1,16 +1,20 @@
 use std::{error::Error, fmt::Display};
 
 pub use async_trait::async_trait;
-pub use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::{select, sync::mpsc::channel};
+pub use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    task::JoinHandle,
+};
 
-use context::{FutureTaskState, State};
 use log::{trace, warn};
+use tokio::{select, sync::mpsc::channel};
 
 mod context;
 mod task_chan;
 
 pub use context::Context;
+
+use context::{FutureTaskState, State};
 use task_chan::{TaskReceiver, TaskSender, task_channel};
 
 pub trait TError: Error + Clone + Send + 'static {}
