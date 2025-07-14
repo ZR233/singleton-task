@@ -18,7 +18,7 @@ impl Display for Error1 {
 }
 
 struct Task1 {
-    tx: Option<SyncSender<u32>>,
+    tx: Option<Sender<u32>>,
 }
 #[async_trait]
 impl Task<Error1> for Task1 {
@@ -28,7 +28,7 @@ impl Task<Error1> for Task1 {
         let id = ctx.id();
         ctx.spawn(async move {
             for i in 0..10 {
-                let _ = tx.send(i);
+                let _ = tx.try_send(i);
                 info!("[{id}]send {i}");
                 sleep(Duration::from_millis(100)).await;
             }
@@ -45,7 +45,7 @@ impl TaskBuilder for Tasl1Builder {
     type Error = Error1;
     type Task = Task1;
 
-    fn build(self, tx: SyncSender<u32>) -> Self::Task {
+    fn build(self, tx: Sender<u32>) -> Self::Task {
         Task1 { tx: Some(tx) }
     }
 }
@@ -57,7 +57,7 @@ async fn main() {
         .init();
 
     let st = SingletonTask::<Error1>::new();
-    let rx = st.start(Tasl1Builder {}).await.unwrap();
+    let mut rx = st.start(Tasl1Builder {}).await.unwrap();
     let h2 = tokio::spawn({
         let st = st.clone();
         async move {
@@ -68,7 +68,7 @@ async fn main() {
         }
     });
 
-    while let Ok(v) = rx.recv() {
+    while let Some(v) = rx.recv().await {
         println!("{v}");
     }
 

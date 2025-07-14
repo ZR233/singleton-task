@@ -1,12 +1,8 @@
-pub use std::sync::mpsc::{Receiver, SyncSender};
-use std::{
-    error::Error,
-    fmt::Display,
-    sync::mpsc::sync_channel,
-};
+use std::{error::Error, fmt::Display};
 
 pub use async_trait::async_trait;
-use tokio::select;
+pub use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::{select, sync::mpsc::channel};
 
 use context::{FutureTaskState, State};
 use log::{trace, warn};
@@ -45,7 +41,7 @@ pub trait TaskBuilder {
     type Error: TError;
     type Task: Task<Self::Error>;
 
-    fn build(self, tx: SyncSender<Self::Output>) -> Self::Task;
+    fn build(self, tx: Sender<Self::Output>) -> Self::Task;
     fn channel_size(&self) -> usize {
         10
     }
@@ -129,7 +125,7 @@ impl<E: TError> SingletonTask<E> {
         task_builder: T,
     ) -> Result<TaskHandle<T::Output, E>, TaskError<E>> {
         let channel_size = task_builder.channel_size();
-        let (tx, rx) = sync_channel::<T::Output>(channel_size);
+        let (tx, rx) = channel::<T::Output>(channel_size);
         let task = Box::new(task_builder.build(tx));
         let task_box = TaskBox {
             task,
@@ -164,7 +160,55 @@ impl<T, E: TError> TaskHandle<T, E> {
         self.ctx.wait_for(State::Stopped)
     }
 
-    pub fn recv(&self) -> Result<T, std::sync::mpsc::RecvError> {
-        self.rx.recv()
+    /// Receives the next value for this receiver.
+    ///
+    /// This method returns `None` if the channel has been closed and there are
+    /// no remaining messages in the channel's buffer. This indicates that no
+    /// further values can ever be received from this `Receiver`. The channel is
+    /// closed when all senders have been dropped, or when [`close`] is called.
+    ///
+    /// If there are no messages in the channel's buffer, but the channel has
+    /// not yet been closed, this method will sleep until a message is sent or
+    /// the channel is closed.  Note that if [`close`] is called, but there are
+    /// still outstanding [`Permits`] from before it was closed, the channel is
+    /// not considered closed by `recv` until the permits are released.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe. If `recv` is used as the event in a
+    /// [`tokio::select!`](crate::select) statement and some other branch
+    /// completes first, it is guaranteed that no messages were received on this
+    /// channel.
+    ///
+    /// [`close`]: Self::close
+    /// [`Permits`]: struct@crate::sync::mpsc::Permit
+    pub async fn recv(&mut self) -> Option<T> {
+        self.rx.recv().await
+    }
+
+    /// Blocking receive to call outside of asynchronous contexts.
+    ///
+    /// This method returns `None` if the channel has been closed and there are
+    /// no remaining messages in the channel's buffer. This indicates that no
+    /// further values can ever be received from this `Receiver`. The channel is
+    /// closed when all senders have been dropped, or when [`close`] is called.
+    ///
+    /// If there are no messages in the channel's buffer, but the channel has
+    /// not yet been closed, this method will block until a message is sent or
+    /// the channel is closed.
+    ///
+    /// This method is intended for use cases where you are sending from
+    /// asynchronous code to synchronous code, and will work even if the sender
+    /// is not using [`blocking_send`] to send the message.
+    ///
+    /// Note that if [`close`] is called, but there are still outstanding
+    /// [`Permits`] from before it was closed, the channel is not considered
+    /// closed by `blocking_recv` until the permits are released.
+    ///
+    /// [`close`]: Self::close
+    /// [`Permits`]: struct@crate::sync::mpsc::Permit
+    /// [`blocking_send`]: fn@crate::sync::mpsc::Sender::blocking_send
+    pub fn blocking_recv(&mut self) -> Option<T> {
+        self.rx.blocking_recv()
     }
 }

@@ -1,13 +1,13 @@
 use std::{
     error::Error,
     fmt::Display,
-    sync::{Arc, Mutex, mpsc::RecvError},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use log::{LevelFilter, debug, info, trace};
 use singleton_task::*;
-use tokio::time::sleep;
+use tokio::{task::JoinHandle, time::sleep};
 
 #[derive(Debug, Clone)]
 enum Error1 {
@@ -23,7 +23,7 @@ impl Display for Error1 {
 }
 
 struct Task1 {
-    tx: Option<SyncSender<u32>>,
+    tx: Option<Sender<u32>>,
 }
 
 #[async_trait]
@@ -34,7 +34,7 @@ impl Task<Error1> for Task1 {
         let id = ctx.id();
         ctx.spawn(async move {
             for i in 0..10 {
-                let _ = tx.send(i);
+                let _ = tx.try_send(i);
                 info!("[{id}]send {i}");
                 sleep(Duration::from_millis(100)).await;
             }
@@ -51,7 +51,7 @@ impl TaskBuilder for Tasl1Builder {
     type Error = Error1;
     type Task = Task1;
 
-    fn build(self, tx: SyncSender<u32>) -> Self::Task {
+    fn build(self, tx: Sender<u32>) -> Self::Task {
         Task1 { tx: Some(tx) }
     }
 }
@@ -73,7 +73,7 @@ impl Display for Error2 {
 
 // 长时间运行的任务，用于测试任务替换
 struct LongRunningTask {
-    tx: Option<SyncSender<String>>,
+    tx: Option<Sender<String>>,
     task_name: String,
     duration_ms: u64,
 }
@@ -89,7 +89,7 @@ impl Task<Error1> for LongRunningTask {
 
         ctx.spawn(async move {
             for i in 0..20 {
-                if tx.send(format!("{task_name}:{i}")).is_err() {
+                if tx.send(format!("{task_name}:{i}")).await.is_err() {
                     break;
                 }
                 info!("[{id}] {task_name} sending: {i}");
@@ -117,7 +117,7 @@ impl TaskBuilder for LongRunningTaskBuilder {
     type Error = Error1;
     type Task = LongRunningTask;
 
-    fn build(self, tx: SyncSender<String>) -> Self::Task {
+    fn build(self, tx: Sender<String>) -> Self::Task {
         LongRunningTask {
             tx: Some(tx),
             task_name: self.task_name,
@@ -128,7 +128,7 @@ impl TaskBuilder for LongRunningTaskBuilder {
 
 // 用于测试错误处理的任务
 struct ErrorTask {
-    tx: Option<SyncSender<u32>>,
+    tx: Option<Sender<u32>>,
     fail_after: u32,
 }
 
@@ -145,7 +145,7 @@ impl Task<Error2> for ErrorTask {
                 if i >= fail_after {
                     return;
                 }
-                if tx.send(i).is_err() {
+                if tx.send(i).await.is_err() {
                     break;
                 }
                 info!("[{id}] ErrorTask sending: {i}");
@@ -170,7 +170,7 @@ impl TaskBuilder for ErrorTaskBuilder {
     type Error = Error2;
     type Task = ErrorTask;
 
-    fn build(self, tx: SyncSender<u32>) -> Self::Task {
+    fn build(self, tx: Sender<u32>) -> Self::Task {
         ErrorTask {
             tx: Some(tx),
             fail_after: self.fail_after,
@@ -180,7 +180,7 @@ impl TaskBuilder for ErrorTaskBuilder {
 
 // 计数任务，用于测试并发
 struct CounterTask {
-    tx: Option<SyncSender<(u32, String)>>,
+    tx: Option<Sender<(u32, String)>>,
     counter: Arc<Mutex<u32>>,
     task_id: String,
 }
@@ -202,7 +202,7 @@ impl Task<Error1> for CounterTask {
                     *c
                 };
 
-                if tx.send((count, task_id.clone())).is_err() {
+                if tx.send((count, task_id.clone())).await.is_err() {
                     break;
                 }
                 info!("[{id}] CounterTask {task_id} count: {count}");
@@ -224,7 +224,7 @@ impl TaskBuilder for CounterTaskBuilder {
     type Error = Error1;
     type Task = CounterTask;
 
-    fn build(self, tx: SyncSender<(u32, String)>) -> Self::Task {
+    fn build(self, tx: Sender<(u32, String)>) -> Self::Task {
         CounterTask {
             tx: Some(tx),
             counter: self.counter,
@@ -248,10 +248,10 @@ async fn test_stop() {
 
     let st = SingletonTask::<Error1>::new();
 
-    let rx = st.start(b).await.unwrap();
+    let mut rx = st.start(b).await.unwrap();
 
     for _ in 0..5 {
-        let r = rx.recv().unwrap();
+        let r = rx.recv().await.unwrap();
         debug!("rcv  {r}");
     }
 
@@ -268,32 +268,32 @@ async fn test_stop2() {
 
     let st = SingletonTask::<Error1>::new();
 
-    let rx = st.start(b).await.unwrap();
+    let mut rx = st.start(b).await.unwrap();
     let begin = Instant::now();
 
-    let h1 = tokio::spawn(async move {
+    let h1: JoinHandle<Option<()>> = tokio::spawn(async move {
         for _ in 0..10 {
             let begin = Instant::now();
-            match rx.recv() {
-                Ok(v) => debug!("rcv  {v}"),
-                Err(e) => return Err(e),
+            match rx.recv().await {
+                Some(v) => debug!("rcv  {v}"),
+                None => return None,
             }
             debug!("rcv cost: {:?}", begin.elapsed());
         }
-        Ok(())
+        Some(())
     });
 
     let b = Tasl1Builder {};
     sleep(Duration::from_millis(30)).await;
 
     debug!("start 2, delay {:?}", begin.elapsed());
-    let t2 = st.start(b).await.unwrap();
+    let mut t2 = st.start(b).await.unwrap();
 
     let r = h1.await.unwrap();
     debug!("h1 end");
 
-    assert!(matches!(r, Err(RecvError)));
-    while let Ok(v) = t2.recv() {
+    assert!(r.is_none());
+    while let Some(v) = t2.recv().await {
         debug!("2 rcv  {v}");
     }
 }
@@ -318,11 +318,11 @@ async fn test_concurrent_task_start() {
             };
 
             match st_clone.start(builder).await {
-                Ok(rx) => {
+                Ok(mut rx) => {
                     debug!("Task {i} started successfully");
                     // 尝试接收一些数据
                     for _ in 0..3 {
-                        if let Ok(msg) = rx.recv() {
+                        if let Some(msg) = rx.recv().await {
                             debug!("Task {i} received: {msg}");
                         }
                     }
@@ -387,7 +387,7 @@ async fn test_rapid_task_replacement() {
     }
 
     // 验证最后一个任务正在运行
-    if let Some(rx) = last_rx {
+    if let Some(mut rx) = last_rx {
         let mut received_count = 0;
         let timeout = Duration::from_secs(2);
         let start = Instant::now();
@@ -486,7 +486,7 @@ async fn test_multiple_task_startup() {
         };
 
         match st.start(builder).await {
-            Ok(handle) => {
+            Ok(mut handle) => {
                 debug!("MultiTask{i} started");
 
                 // 接收一些消息
@@ -532,7 +532,7 @@ async fn test_concurrent_stop() {
         duration_ms: 200, // 增加持续时间确保任务还在运行
     };
 
-    let handle = st.start(builder).await.unwrap();
+    let mut handle = st.start(builder).await.unwrap();
     let ctx = handle.ctx.clone();
 
     // 让任务运行一段时间
@@ -561,12 +561,12 @@ async fn test_concurrent_stop() {
         let start = Instant::now();
 
         while start.elapsed() < timeout {
-            match handle.recv() {
-                Ok(msg) => {
+            match handle.recv().await {
+                Some(msg) => {
                     debug!("Read message: {msg}");
                     messages.push(msg);
                 }
-                Err(_) => {
+                None => {
                     debug!("Channel closed or error");
                     break;
                 }
@@ -621,13 +621,13 @@ async fn test_high_concurrency() {
             };
 
             match st_clone.start(builder).await {
-                Ok(rx) => {
+                Ok(mut rx) => {
                     let mut received = 0;
                     let timeout = Duration::from_secs(1);
                     let start = Instant::now();
 
                     while start.elapsed() < timeout && received < 3 {
-                        if let Ok((count, task_id)) = rx.recv() {
+                        if let Some((count, task_id)) = rx.recv().await {
                             debug!("Task {i} - Count: {count}, TaskId: {task_id}");
                             received += 1;
                         }
