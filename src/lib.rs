@@ -1,4 +1,4 @@
-use std::{error::Error, fmt::Display};
+use std::{error::Error, fmt::Display, pin::Pin};
 
 pub use async_trait::async_trait;
 pub use tokio::{
@@ -16,6 +16,7 @@ pub use context::Context;
 
 use context::{FutureTaskState, State};
 use task_chan::{TaskReceiver, TaskSender, task_channel};
+use tokio_stream::Stream;
 
 pub trait TError: Error + Clone + Send + 'static {}
 
@@ -214,5 +215,16 @@ impl<T, E: TError> TaskHandle<T, E> {
     /// [`blocking_send`]: fn@crate::sync::mpsc::Sender::blocking_send
     pub fn blocking_recv(&mut self) -> Option<T> {
         self.rx.blocking_recv()
+    }
+}
+
+impl<T, E: TError> Stream for TaskHandle<T, E> {
+    type Item = T;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
     }
 }
